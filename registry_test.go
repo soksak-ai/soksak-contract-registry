@@ -48,9 +48,19 @@ func TestProfileBindingsStayInsideExactClosure(t *testing.T) {
 	provider := ref(composition.Sidecar, "provider")
 	other := ref(composition.Sidecar, "other")
 	pluginRelease := release(plugin)
-	pluginRelease.Dependencies = []Dependency{{Unit: provider, Scope: Runtime}}
-	registry := Registry{Spec: RegistrySpec, ID: "official", Sequence: 1, Releases: []Release{pluginRelease, release(other), release(provider)}, Profiles: []Profile{{ID: "view", Root: plugin, Bindings: []composition.Binding{{Consumer: plugin, Requirement: "state", Provider: other}}}}}
-	if err := Validate(registry); err == nil || !strings.Contains(err.Error(), "closure") {
+	registry := Registry{Spec: RegistrySpec, ID: "official", Sequence: 1, Releases: []Release{pluginRelease, release(other), release(provider)}, Profiles: []Profile{{ID: "view", Root: plugin, Bindings: []composition.Binding{{Consumer: plugin, Requirement: "state", Provider: provider}}}}}
+	if err := Validate(registry); err != nil {
+		t.Fatal(err)
+	}
+	closure, err := ProfileRuntimeClosure(registry, "view")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(closure) != 2 || closure[0] != plugin || closure[1] != provider {
+		t.Fatalf("closure=%+v", closure)
+	}
+	registry.Profiles[0].Bindings[0].Consumer = other
+	if err := Validate(registry); err == nil || !strings.Contains(err.Error(), "consumer") {
 		t.Fatalf("error = %v", err)
 	}
 }

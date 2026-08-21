@@ -121,8 +121,15 @@ func Validate(registry Registry) error {
 			return err
 		}
 		for _, binding := range profile.Bindings {
-			if !closure[binding.Consumer.Key()] || !closure[binding.Provider.Key()] {
-				return fmt.Errorf("profile binding leaves closure")
+			if !closure[binding.Consumer.Key()] {
+				return fmt.Errorf("profile binding consumer leaves root closure")
+			}
+			providerClosure, err := resolveClosure(binding.Provider, releases)
+			if err != nil {
+				return err
+			}
+			for key := range providerClosure {
+				closure[key] = true
 			}
 		}
 		profileIDs = append(profileIDs, profile.ID)
@@ -131,6 +138,43 @@ func Validate(registry Registry) error {
 		return fmt.Errorf("profiles must be sorted and unique")
 	}
 	return nil
+}
+
+func ProfileRuntimeClosure(registry Registry, profileID string) ([]composition.UnitRef, error) {
+	if err := Validate(registry); err != nil {
+		return nil, err
+	}
+	index := make(map[string]Release, len(registry.Releases))
+	for _, release := range registry.Releases {
+		index[release.Unit.Key()] = release
+	}
+	for _, profile := range registry.Profiles {
+		if profile.ID != profileID {
+			continue
+		}
+		closure, err := resolveClosure(profile.Root, index)
+		if err != nil {
+			return nil, err
+		}
+		for _, binding := range profile.Bindings {
+			providerClosure, err := resolveClosure(binding.Provider, index)
+			if err != nil {
+				return nil, err
+			}
+			for key := range providerClosure {
+				closure[key] = true
+			}
+		}
+		result := make([]composition.UnitRef, 0, len(closure))
+		for _, release := range registry.Releases {
+			if closure[release.Unit.Key()] {
+				result = append(result, release.Unit)
+			}
+		}
+		sort.Slice(result, func(i, j int) bool { return result[i].Key() < result[j].Key() })
+		return result, nil
+	}
+	return nil, fmt.Errorf("profile not found: %s", profileID)
 }
 
 func ValidateRelease(release Release) error {

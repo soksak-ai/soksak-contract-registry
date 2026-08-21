@@ -12,6 +12,10 @@ A profile selects one plugin root and explicit provider bindings inside that plu
 The plugin manifest remains provider-agnostic. No provider is selected by install order, directory
 order, name convention or fallback.
 
+The runtime install closure is the plugin's runtime dependency closure plus every explicitly bound
+provider and each provider's runtime dependencies. A binding consumer must already be inside the
+plugin root closure; a binding provider need not be a direct plugin dependency.
+
 Each owner repository creates and verifies its release and conformance reports. The registry reads
 immutable release documents and never reads or builds owner source trees.
 
