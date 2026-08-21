@@ -32,13 +32,24 @@ type Artifact struct {
 	Format       string `json:"format"`
 	UnitManifest string `json:"unitManifest"`
 }
+type DependencyScope string
+
+const (
+	Runtime DependencyScope = "runtime"
+	Build   DependencyScope = "build"
+)
+
+type Dependency struct {
+	Unit  composition.UnitRef `json:"unit"`
+	Scope DependencyScope     `json:"scope"`
+}
 type Release struct {
-	Spec         string                `json:"spec"`
-	Unit         composition.UnitRef   `json:"unit"`
-	Source       Source                `json:"source"`
-	Dependencies []composition.UnitRef `json:"dependencies"`
-	Artifacts    []Artifact            `json:"artifacts"`
-	Reports      []Integrity           `json:"reports"`
+	Spec         string              `json:"spec"`
+	Unit         composition.UnitRef `json:"unit"`
+	Source       Source              `json:"source"`
+	Dependencies []Dependency        `json:"dependencies"`
+	Artifacts    []Artifact          `json:"artifacts"`
+	Reports      []Integrity         `json:"reports"`
 }
 type Profile struct {
 	ID       string                `json:"id"`
@@ -134,10 +145,10 @@ func ValidateRelease(release Release) error {
 	}
 	dependencyKeys := []string{}
 	for _, dependency := range release.Dependencies {
-		if !validUnit(dependency) {
+		if !validUnit(dependency.Unit) || (dependency.Scope != Runtime && dependency.Scope != Build) {
 			return fmt.Errorf("invalid dependency")
 		}
-		dependencyKeys = append(dependencyKeys, dependency.Key())
+		dependencyKeys = append(dependencyKeys, dependency.Unit.Key())
 	}
 	if !sortedUnique(dependencyKeys) {
 		return fmt.Errorf("dependencies must be sorted and unique")
@@ -183,7 +194,10 @@ func resolveClosure(root composition.UnitRef, releases map[string]Release) (map[
 		}
 		visiting[key] = true
 		for _, dependency := range release.Dependencies {
-			if err := visit(dependency); err != nil {
+			if dependency.Scope == Build {
+				continue
+			}
+			if err := visit(dependency.Unit); err != nil {
 				return err
 			}
 		}
@@ -192,6 +206,25 @@ func resolveClosure(root composition.UnitRef, releases map[string]Release) (map[
 		return nil
 	}
 	return result, visit(root)
+}
+
+func RuntimeClosure(root composition.UnitRef, releases []Release) ([]composition.UnitRef, error) {
+	index := make(map[string]Release, len(releases))
+	for _, release := range releases {
+		index[release.Unit.Key()] = release
+	}
+	set, err := resolveClosure(root, index)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]composition.UnitRef, 0, len(set))
+	for _, release := range releases {
+		if set[release.Unit.Key()] {
+			result = append(result, release.Unit)
+		}
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].Key() < result[j].Key() })
+	return result, nil
 }
 func validUnit(unit composition.UnitRef) bool {
 	return (unit.Kind == composition.Plugin || unit.Kind == composition.Sidecar || unit.Kind == composition.Kit) && idPattern.MatchString(unit.ID) && exactVersion.MatchString(unit.Version)

@@ -4,6 +4,10 @@ The registry exposes plugins to users and retains sidecar and kit releases only 
 closure nodes. Every release has exact identity, immutable source commit, exact dependencies,
 targeted archives containing soksak-unit.json and conformance report references.
 
+Every dependency declares runtime or build scope. Runtime dependencies enter the installer closure
+and settings composition. Build dependencies record reproducibility of the owner artifact and are
+not installed separately. A kit may use either scope; its kind does not imply its scope.
+
 A profile selects one plugin root and explicit provider bindings inside that plugin's exact closure.
 The plugin manifest remains provider-agnostic. No provider is selected by install order, directory
 order, name convention or fallback.

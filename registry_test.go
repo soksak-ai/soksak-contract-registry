@@ -17,7 +17,7 @@ func ref(kind composition.UnitKind, id string) composition.UnitRef {
 func release(unit composition.UnitRef) Release {
 	return Release{
 		Spec: ReleaseSpec, Unit: unit, Source: Source{Repository: "https://github.com/example/" + unit.ID, Commit: commit},
-		Dependencies: []composition.UnitRef{},
+		Dependencies: []Dependency{},
 		Artifacts:    []Artifact{{Target: "aarch64-apple-darwin", URL: "https://github.com/example/" + unit.ID + "/releases/download/v0.0.1/" + unit.ID + ".tgz", SHA256: digest, Format: "tgz", UnitManifest: composition.UnitManifestFile}},
 		Reports:      []Integrity{{URL: "https://github.com/example/" + unit.ID + "/releases/download/v0.0.1/conformance.json", SHA256: digest}},
 	}
@@ -28,7 +28,7 @@ func TestRegistryPublishesPluginsAndTheirExactClosure(t *testing.T) {
 	provider := ref(composition.Sidecar, "terminal-state")
 	kit := ref(composition.Kit, "terminal-runtime")
 	pluginRelease := release(plugin)
-	pluginRelease.Dependencies = []composition.UnitRef{kit, provider}
+	pluginRelease.Dependencies = []Dependency{{Unit: kit, Scope: Build}, {Unit: provider, Scope: Runtime}}
 	registry := Registry{Spec: RegistrySpec, ID: "official", Sequence: 1, Releases: []Release{release(kit), pluginRelease, release(provider)}, Profiles: []Profile{{ID: "terminal-view", Root: plugin, Bindings: []composition.Binding{{Consumer: plugin, Requirement: "state", Provider: provider}}}}}
 	if err := Validate(registry); err != nil {
 		t.Fatal(err)
@@ -48,10 +48,36 @@ func TestProfileBindingsStayInsideExactClosure(t *testing.T) {
 	provider := ref(composition.Sidecar, "provider")
 	other := ref(composition.Sidecar, "other")
 	pluginRelease := release(plugin)
-	pluginRelease.Dependencies = []composition.UnitRef{provider}
+	pluginRelease.Dependencies = []Dependency{{Unit: provider, Scope: Runtime}}
 	registry := Registry{Spec: RegistrySpec, ID: "official", Sequence: 1, Releases: []Release{pluginRelease, release(other), release(provider)}, Profiles: []Profile{{ID: "view", Root: plugin, Bindings: []composition.Binding{{Consumer: plugin, Requirement: "state", Provider: other}}}}}
 	if err := Validate(registry); err == nil || !strings.Contains(err.Error(), "closure") {
 		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestBuildDependenciesAreNotInstalledAtRuntime(t *testing.T) {
+	plugin := ref(composition.Plugin, "view")
+	runtimeKit := ref(composition.Kit, "runtime-kit")
+	buildKit := ref(composition.Kit, "build-kit")
+	pluginRelease := release(plugin)
+	pluginRelease.Dependencies = []Dependency{{Unit: buildKit, Scope: Build}, {Unit: runtimeKit, Scope: Runtime}}
+	releases := []Release{release(buildKit), pluginRelease, release(runtimeKit)}
+	closure, err := RuntimeClosure(plugin, releases)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(closure) != 2 || closure[0] != plugin || closure[1] != runtimeKit {
+		t.Fatalf("closure = %+v", closure)
+	}
+}
+
+func TestDependencyScopeIsRequiredAndStrict(t *testing.T) {
+	plugin := ref(composition.Plugin, "view")
+	kit := ref(composition.Kit, "kit")
+	candidate := release(plugin)
+	candidate.Dependencies = []Dependency{{Unit: kit, Scope: ""}}
+	if err := ValidateRelease(candidate); err == nil {
+		t.Fatal("dependency with no scope was accepted")
 	}
 }
 
