@@ -66,7 +66,7 @@ func TestBuildDependenciesAreNotInstalledAtRuntime(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(closure) != 2 || closure[0] != plugin || closure[1] != runtimeKit {
+	if len(closure) != 2 || closure[0] != runtimeKit || closure[1] != plugin {
 		t.Fatalf("closure = %+v", closure)
 	}
 }
