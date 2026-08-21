@@ -13,7 +13,7 @@ func signedFixture(t *testing.T) (SignedRegistry, Trust) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	payload := Registry{Spec: RegistrySpec, ID: "official", Sequence: 1, Plugins: []PluginRelease{}, Sidecars: []SidecarRelease{}, Kits: []KitRelease{}, Profiles: []Profile{}}
+	payload := Registry{ID: "official", Sequence: 1, Plugins: []PluginRelease{}, Sidecars: []SidecarRelease{}, Kits: []KitRelease{}, Contracts: []ContractRelease{}, Specs: []SpecRelease{}}
 	document := SignedRegistry{Registry: payload, IssuedAt: "2026-08-21T00:00:00Z", ExpiresAt: "2026-09-21T00:00:00Z", KeyID: "test-key", Algorithm: "ed25519"}
 	if err := Sign(&document, private); err != nil {
 		t.Fatal(err)
@@ -21,15 +21,15 @@ func signedFixture(t *testing.T) (SignedRegistry, Trust) {
 	return document, Trust{RegistryID: "official", KeyID: "test-key", PublicKey: public}
 }
 
-func TestSignedRegistryCoversProfilesAndReleases(t *testing.T) {
+func TestSignedRegistryCoversReleases(t *testing.T) {
 	document, trust := signedFixture(t)
 	result, err := Verify(document, trust, time.Date(2026, 8, 22, 0, 0, 0, 0, time.UTC), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	document.Registry.Profiles = []Profile{{ID: "changed"}}
+	document.Registry.Sequence = 2
 	if _, err := Verify(document, trust, time.Date(2026, 8, 22, 0, 0, 0, 0, time.UTC), nil); err == nil {
-		t.Fatal("profile mutation kept a valid signature")
+		t.Fatal("registry mutation kept a valid signature")
 	}
 	if result.Sequence != 1 || result.Digest == "" {
 		t.Fatalf("result = %+v", result)
