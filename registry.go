@@ -7,7 +7,6 @@ import (
 	"io"
 	"regexp"
 	"sort"
-	"strings"
 
 	composition "github.com/soksak-ai/soksak-contract-composition"
 )
@@ -15,6 +14,13 @@ import (
 const (
 	RegistrySpec = "soksak-spec-registry@0.0.1"
 	ReleaseSpec  = "soksak-spec-release@0.0.1"
+)
+
+type DependencyScope string
+
+const (
+	Runtime DependencyScope = "runtime"
+	Build   DependencyScope = "build"
 )
 
 type Source struct {
@@ -26,48 +32,68 @@ type Integrity struct {
 	SHA256 string `json:"sha256"`
 }
 type Artifact struct {
-	Target       string `json:"target"`
-	URL          string `json:"url"`
-	SHA256       string `json:"sha256"`
-	Format       string `json:"format"`
-	UnitManifest string `json:"unitManifest"`
+	Target   string `json:"target"`
+	URL      string `json:"url"`
+	SHA256   string `json:"sha256"`
+	Format   string `json:"format"`
+	Manifest string `json:"manifest"`
 }
-type DependencyScope string
-
-const (
-	Runtime DependencyScope = "runtime"
-	Build   DependencyScope = "build"
-)
-
 type Dependency struct {
-	Unit  composition.UnitRef `json:"unit"`
-	Scope DependencyScope     `json:"scope"`
+	Plugin  *composition.PluginRef  `json:"plugin,omitempty"`
+	Sidecar *composition.SidecarRef `json:"sidecar,omitempty"`
+	Kit     *composition.KitRef     `json:"kit,omitempty"`
+	Scope   DependencyScope         `json:"scope"`
 }
-type Release struct {
-	Spec         string              `json:"spec"`
-	Unit         composition.UnitRef `json:"unit"`
-	Source       Source              `json:"source"`
-	Dependencies []Dependency        `json:"dependencies"`
-	Artifacts    []Artifact          `json:"artifacts"`
-	Reports      []Integrity         `json:"reports"`
+type releaseFields struct {
+	Spec         string
+	Source       Source
+	Dependencies []Dependency
+	Artifacts    []Artifact
+	Reports      []Integrity
+}
+type PluginRelease struct {
+	Spec         string                `json:"spec"`
+	Plugin       composition.PluginRef `json:"plugin"`
+	Source       Source                `json:"source"`
+	Dependencies []Dependency          `json:"dependencies"`
+	Artifacts    []Artifact            `json:"artifacts"`
+	Reports      []Integrity           `json:"reports"`
+}
+type SidecarRelease struct {
+	Spec         string                 `json:"spec"`
+	Sidecar      composition.SidecarRef `json:"sidecar"`
+	Source       Source                 `json:"source"`
+	Dependencies []Dependency           `json:"dependencies"`
+	Artifacts    []Artifact             `json:"artifacts"`
+	Reports      []Integrity            `json:"reports"`
+}
+type KitRelease struct {
+	Spec         string             `json:"spec"`
+	Kit          composition.KitRef `json:"kit"`
+	Source       Source             `json:"source"`
+	Dependencies []Dependency       `json:"dependencies"`
+	Artifacts    []Artifact         `json:"artifacts"`
+	Reports      []Integrity        `json:"reports"`
 }
 type Profile struct {
 	ID       string                `json:"id"`
-	Root     composition.UnitRef   `json:"root"`
+	Plugin   composition.PluginRef `json:"plugin"`
 	Bindings []composition.Binding `json:"bindings"`
 }
 type Registry struct {
-	Spec     string    `json:"spec"`
-	ID       string    `json:"id"`
-	Sequence uint64    `json:"sequence"`
-	Releases []Release `json:"releases"`
-	Profiles []Profile `json:"profiles"`
+	Spec     string           `json:"spec"`
+	ID       string           `json:"id"`
+	Sequence uint64           `json:"sequence"`
+	Plugins  []PluginRelease  `json:"plugins"`
+	Sidecars []SidecarRelease `json:"sidecars"`
+	Kits     []KitRelease     `json:"kits"`
+	Profiles []Profile        `json:"profiles"`
 }
 
-var exactVersion = regexp.MustCompile("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$")
+var idPattern = regexp.MustCompile("^[a-z0-9][a-z0-9-]*$")
+var versionPattern = regexp.MustCompile("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$")
 var commitPattern = regexp.MustCompile("^[0-9a-f]{40}$")
 var digestPattern = regexp.MustCompile("^[0-9a-f]{64}$")
-var idPattern = regexp.MustCompile("^[a-z0-9][a-z0-9-]*$")
 
 func Parse(body []byte) (Registry, error) {
 	decoder := json.NewDecoder(bytes.NewReader(body))
@@ -79,57 +105,78 @@ func Parse(body []byte) (Registry, error) {
 	if err := decoder.Decode(&struct{}{}); err != io.EOF {
 		return Registry{}, fmt.Errorf("registry has trailing data")
 	}
+	normalize(&registry)
 	if err := Validate(registry); err != nil {
 		return Registry{}, err
 	}
 	return registry, nil
 }
-
 func Validate(registry Registry) error {
 	if registry.Spec != RegistrySpec || !idPattern.MatchString(registry.ID) || registry.Sequence < 1 {
 		return fmt.Errorf("invalid registry identity")
 	}
-	if registry.Releases == nil || registry.Profiles == nil {
-		return fmt.Errorf("releases and profiles arrays are required")
+	if registry.Plugins == nil || registry.Sidecars == nil || registry.Kits == nil || registry.Profiles == nil {
+		return fmt.Errorf("plugins, sidecars, kits and profiles arrays are required")
 	}
-	releases := make(map[string]Release, len(registry.Releases))
-	keys := make([]string, 0, len(registry.Releases))
-	for _, release := range registry.Releases {
-		if err := ValidateRelease(release); err != nil {
+	index := map[string][]Dependency{}
+	pluginKeys := []string{}
+	sidecarKeys := []string{}
+	kitKeys := []string{}
+	for _, release := range registry.Plugins {
+		key := "plugin:" + release.Plugin.ID + "@" + release.Plugin.Version
+		if err := validateRelease(key, release.Spec, release.Plugin.ID, release.Plugin.Version, release.Source, release.Dependencies, release.Artifacts, release.Reports, "plugin.json"); err != nil {
 			return err
 		}
-		key := release.Unit.Key()
-		if _, exists := releases[key]; exists {
-			return fmt.Errorf("duplicate release %s", key)
-		}
-		releases[key] = release
-		keys = append(keys, key)
+		index[key] = release.Dependencies
+		pluginKeys = append(pluginKeys, key)
 	}
-	if !sort.StringsAreSorted(keys) {
-		return fmt.Errorf("releases must be sorted")
+	for _, release := range registry.Sidecars {
+		key := "sidecar:" + release.Sidecar.ID + "@" + release.Sidecar.Version
+		if err := validateRelease(key, release.Spec, release.Sidecar.ID, release.Sidecar.Version, release.Source, release.Dependencies, release.Artifacts, release.Reports, "sidecar.json"); err != nil {
+			return err
+		}
+		index[key] = release.Dependencies
+		sidecarKeys = append(sidecarKeys, key)
+	}
+	for _, release := range registry.Kits {
+		key := "kit:" + release.Kit.ID + "@" + release.Kit.Version
+		if err := validateRelease(key, release.Spec, release.Kit.ID, release.Kit.Version, release.Source, release.Dependencies, release.Artifacts, release.Reports, "package.json"); err != nil {
+			return err
+		}
+		index[key] = release.Dependencies
+		kitKeys = append(kitKeys, key)
+	}
+	if !sortedUnique(pluginKeys) || !sortedUnique(sidecarKeys) || !sortedUnique(kitKeys) {
+		return fmt.Errorf("releases must be sorted and unique")
 	}
 	profileIDs := []string{}
 	for _, profile := range registry.Profiles {
-		if !idPattern.MatchString(profile.ID) || profile.Root.Kind != composition.Plugin {
-			return fmt.Errorf("profile root must be a plugin")
+		root := "plugin:" + profile.Plugin.ID + "@" + profile.Plugin.Version
+		if _, exists := index[root]; !exists {
+			return fmt.Errorf("profile plugin is absent")
 		}
-		if _, exists := releases[profile.Root.Key()]; !exists {
-			return fmt.Errorf("profile root is absent")
-		}
-		closure, err := resolveClosure(profile.Root, releases)
+		profileClosure, err := closure(root, index)
 		if err != nil {
 			return err
 		}
 		for _, binding := range profile.Bindings {
-			if !closure[binding.Consumer.Key()] {
-				return fmt.Errorf("profile binding consumer leaves root closure")
+			consumer, err := endpointKey(binding.Consumer)
+			if err != nil {
+				return err
 			}
-			providerClosure, err := resolveClosure(binding.Provider, releases)
+			if !profileClosure[consumer] {
+				return fmt.Errorf("profile binding consumer leaves plugin closure")
+			}
+			provider, err := endpointKey(binding.Provider)
+			if err != nil {
+				return err
+			}
+			providerClosure, err := closure(provider, index)
 			if err != nil {
 				return err
 			}
 			for key := range providerClosure {
-				closure[key] = true
+				profileClosure[key] = true
 			}
 		}
 		profileIDs = append(profileIDs, profile.ID)
@@ -140,108 +187,105 @@ func Validate(registry Registry) error {
 	return nil
 }
 
-func ProfileRuntimeClosure(registry Registry, profileID string) ([]composition.UnitRef, error) {
-	if err := Validate(registry); err != nil {
-		return nil, err
+func validateRelease(key, spec, id, version string, source Source, dependencies []Dependency, artifacts []Artifact, reports []Integrity, manifest string) error {
+	if spec != ReleaseSpec || !idPattern.MatchString(id) || !versionPattern.MatchString(version) {
+		return fmt.Errorf("invalid release %s", key)
 	}
-	index := make(map[string]Release, len(registry.Releases))
-	for _, release := range registry.Releases {
-		index[release.Unit.Key()] = release
+	if source.Repository == "" || !commitPattern.MatchString(source.Commit) {
+		return fmt.Errorf("invalid source %s", key)
 	}
-	for _, profile := range registry.Profiles {
-		if profile.ID != profileID {
-			continue
-		}
-		closure, err := resolveClosure(profile.Root, index)
-		if err != nil {
-			return nil, err
-		}
-		for _, binding := range profile.Bindings {
-			providerClosure, err := resolveClosure(binding.Provider, index)
-			if err != nil {
-				return nil, err
-			}
-			for key := range providerClosure {
-				closure[key] = true
-			}
-		}
-		result := make([]composition.UnitRef, 0, len(closure))
-		for _, release := range registry.Releases {
-			if closure[release.Unit.Key()] {
-				result = append(result, release.Unit)
-			}
-		}
-		sort.Slice(result, func(i, j int) bool { return result[i].Key() < result[j].Key() })
-		return result, nil
-	}
-	return nil, fmt.Errorf("profile not found: %s", profileID)
-}
-
-func ValidateRelease(release Release) error {
-	if release.Spec != ReleaseSpec || !validUnit(release.Unit) {
-		return fmt.Errorf("invalid release identity")
-	}
-	if release.Source.Repository == "" || !commitPattern.MatchString(release.Source.Commit) {
-		return fmt.Errorf("release source requires repository and exact commit")
-	}
-	if release.Dependencies == nil || len(release.Artifacts) == 0 || len(release.Reports) == 0 {
-		return fmt.Errorf("release dependencies, artifacts and reports are required")
+	if dependencies == nil || len(artifacts) == 0 || len(reports) == 0 {
+		return fmt.Errorf("incomplete release %s", key)
 	}
 	dependencyKeys := []string{}
-	for _, dependency := range release.Dependencies {
-		if !validUnit(dependency.Unit) || (dependency.Scope != Runtime && dependency.Scope != Build) {
-			return fmt.Errorf("invalid dependency")
+	for _, dependency := range dependencies {
+		dependencyKey, err := dependencyKey(dependency)
+		if err != nil {
+			return err
 		}
-		dependencyKeys = append(dependencyKeys, dependency.Unit.Key())
+		dependencyKeys = append(dependencyKeys, dependencyKey)
 	}
 	if !sortedUnique(dependencyKeys) {
 		return fmt.Errorf("dependencies must be sorted and unique")
 	}
 	targets := []string{}
-	for _, artifact := range release.Artifacts {
-		if artifact.Target == "" || artifact.URL == "" || !digestPattern.MatchString(artifact.SHA256) || (artifact.Format != "tgz" && artifact.Format != "tar.gz") || artifact.UnitManifest != composition.UnitManifestFile {
-			return fmt.Errorf("invalid release artifact")
+	for _, artifact := range artifacts {
+		if artifact.Target == "" || artifact.URL == "" || !digestPattern.MatchString(artifact.SHA256) || (artifact.Format != "tgz" && artifact.Format != "tar.gz") || artifact.Manifest != manifest {
+			return fmt.Errorf("invalid artifact %s", key)
 		}
 		targets = append(targets, artifact.Target)
 	}
 	if !sortedUnique(targets) {
-		return fmt.Errorf("artifact targets must be sorted and unique")
+		return fmt.Errorf("artifacts must be sorted and unique")
 	}
-	reports := []string{}
-	for _, report := range release.Reports {
+	reportURLs := []string{}
+	for _, report := range reports {
 		if report.URL == "" || !digestPattern.MatchString(report.SHA256) {
-			return fmt.Errorf("invalid conformance report")
+			return fmt.Errorf("invalid report %s", key)
 		}
-		reports = append(reports, report.URL)
+		reportURLs = append(reportURLs, report.URL)
 	}
-	if !sortedUnique(reports) {
+	if !sortedUnique(reportURLs) {
 		return fmt.Errorf("reports must be sorted and unique")
 	}
 	return nil
 }
-
-func resolveClosure(root composition.UnitRef, releases map[string]Release) (map[string]bool, error) {
+func dependencyKey(value Dependency) (string, error) {
+	if value.Scope != Runtime && value.Scope != Build {
+		return "", fmt.Errorf("dependency scope required")
+	}
+	endpoint := composition.Endpoint{Plugin: value.Plugin, Sidecar: value.Sidecar, Kit: value.Kit}
+	key, err := endpointKey(endpoint)
+	if err != nil {
+		return "", err
+	}
+	return key, nil
+}
+func endpointKey(value composition.Endpoint) (string, error) {
+	count := 0
+	key := ""
+	if value.Plugin != nil {
+		count++
+		key = "plugin:" + value.Plugin.ID + "@" + value.Plugin.Version
+	}
+	if value.Sidecar != nil {
+		count++
+		key = "sidecar:" + value.Sidecar.ID + "@" + value.Sidecar.Version
+	}
+	if value.Kit != nil {
+		count++
+		key = "kit:" + value.Kit.ID + "@" + value.Kit.Version
+	}
+	if count != 1 {
+		return "", fmt.Errorf("exactly one plugin, sidecar or kit reference required")
+	}
+	return key, nil
+}
+func closure(root string, index map[string][]Dependency) (map[string]bool, error) {
 	result := map[string]bool{}
 	visiting := map[string]bool{}
-	var visit func(composition.UnitRef) error
-	visit = func(unit composition.UnitRef) error {
-		key := unit.Key()
+	var visit func(string) error
+	visit = func(key string) error {
 		if result[key] {
 			return nil
 		}
 		if visiting[key] {
 			return fmt.Errorf("dependency cycle")
 		}
-		release, exists := releases[key]
+		dependencies, exists := index[key]
 		if !exists {
-			return fmt.Errorf("dependency absent from registry: %s", key)
+			return fmt.Errorf("dependency absent: %s", key)
 		}
 		visiting[key] = true
-		for _, dependency := range release.Dependencies {
+		for _, dependency := range dependencies {
 			if dependency.Scope == Build {
 				continue
 			}
-			if err := visit(dependency.Unit); err != nil {
+			next, err := dependencyKey(dependency)
+			if err != nil {
+				return err
+			}
+			if err := visit(next); err != nil {
 				return err
 			}
 		}
@@ -251,27 +295,19 @@ func resolveClosure(root composition.UnitRef, releases map[string]Release) (map[
 	}
 	return result, visit(root)
 }
-
-func RuntimeClosure(root composition.UnitRef, releases []Release) ([]composition.UnitRef, error) {
-	index := make(map[string]Release, len(releases))
-	for _, release := range releases {
-		index[release.Unit.Key()] = release
+func normalize(registry *Registry) {
+	if registry.Plugins == nil {
+		registry.Plugins = []PluginRelease{}
 	}
-	set, err := resolveClosure(root, index)
-	if err != nil {
-		return nil, err
+	if registry.Sidecars == nil {
+		registry.Sidecars = []SidecarRelease{}
 	}
-	result := make([]composition.UnitRef, 0, len(set))
-	for _, release := range releases {
-		if set[release.Unit.Key()] {
-			result = append(result, release.Unit)
-		}
+	if registry.Kits == nil {
+		registry.Kits = []KitRelease{}
 	}
-	sort.Slice(result, func(i, j int) bool { return result[i].Key() < result[j].Key() })
-	return result, nil
-}
-func validUnit(unit composition.UnitRef) bool {
-	return (unit.Kind == composition.Plugin || unit.Kind == composition.Sidecar || unit.Kind == composition.Kit) && idPattern.MatchString(unit.ID) && exactVersion.MatchString(unit.Version)
+	if registry.Profiles == nil {
+		registry.Profiles = []Profile{}
+	}
 }
 func sortedUnique(values []string) bool {
 	if !sort.StringsAreSorted(values) {
@@ -283,16 +319,4 @@ func sortedUnique(values []string) bool {
 		}
 	}
 	return true
-}
-
-func ProfileBindings(registry Registry, profileID string) ([]composition.Binding, error) {
-	if err := Validate(registry); err != nil {
-		return nil, err
-	}
-	for _, profile := range registry.Profiles {
-		if profile.ID == profileID {
-			return append([]composition.Binding(nil), profile.Bindings...), nil
-		}
-	}
-	return nil, fmt.Errorf("profile not found: %s", strings.TrimSpace(profileID))
 }

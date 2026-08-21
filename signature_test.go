@@ -13,7 +13,7 @@ func signedFixture(t *testing.T) (SignedRegistry, Trust) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	payload := Registry{Spec: RegistrySpec, ID: "official", Sequence: 1, Releases: []Release{}, Profiles: []Profile{}}
+	payload := Registry{Spec: RegistrySpec, ID: "official", Sequence: 1, Plugins: []PluginRelease{}, Sidecars: []SidecarRelease{}, Kits: []KitRelease{}, Profiles: []Profile{}}
 	document := SignedRegistry{Registry: payload, IssuedAt: "2026-08-21T00:00:00Z", ExpiresAt: "2026-09-21T00:00:00Z", KeyID: "test-key", Algorithm: "ed25519"}
 	if err := Sign(&document, private); err != nil {
 		t.Fatal(err)

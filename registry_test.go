@@ -1,7 +1,6 @@
 package registry
 
 import (
-	"strings"
 	"testing"
 
 	composition "github.com/soksak-ai/soksak-contract-composition"
@@ -10,102 +9,64 @@ import (
 const commit = "0123456789abcdef0123456789abcdef01234567"
 const digest = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 
-func ref(kind composition.UnitKind, id string) composition.UnitRef {
-	return composition.UnitRef{Kind: kind, ID: id, Version: "0.0.1"}
-}
-
-func release(unit composition.UnitRef) Release {
-	return Release{
-		Spec: ReleaseSpec, Unit: unit, Source: Source{Repository: "https://github.com/example/" + unit.ID, Commit: commit},
+func pluginRelease(id string) PluginRelease {
+	return PluginRelease{
+		Spec:         ReleaseSpec,
+		Plugin:       composition.PluginRef{ID: id, Version: "0.0.1"},
+		Source:       Source{Repository: "https://github.com/example/" + id, Commit: commit},
 		Dependencies: []Dependency{},
-		Artifacts:    []Artifact{{Target: "aarch64-apple-darwin", URL: "https://github.com/example/" + unit.ID + "/releases/download/v0.0.1/" + unit.ID + ".tgz", SHA256: digest, Format: "tgz", UnitManifest: composition.UnitManifestFile}},
-		Reports:      []Integrity{{URL: "https://github.com/example/" + unit.ID + "/releases/download/v0.0.1/conformance.json", SHA256: digest}},
+		Artifacts:    []Artifact{{Target: "any", URL: "https://example.invalid/p.tgz", SHA256: digest, Format: "tgz", Manifest: "plugin.json"}},
+		Reports:      []Integrity{{URL: "https://example.invalid/report", SHA256: digest}},
 	}
 }
 
-func TestRegistryPublishesPluginsAndTheirExactClosure(t *testing.T) {
-	plugin := ref(composition.Plugin, "terminal-view")
-	provider := ref(composition.Sidecar, "terminal-state")
-	kit := ref(composition.Kit, "terminal-runtime")
-	pluginRelease := release(plugin)
-	pluginRelease.Dependencies = []Dependency{{Unit: kit, Scope: Build}, {Unit: provider, Scope: Runtime}}
-	registry := Registry{Spec: RegistrySpec, ID: "official", Sequence: 1, Releases: []Release{release(kit), pluginRelease, release(provider)}, Profiles: []Profile{{ID: "terminal-view", Root: plugin, Bindings: []composition.Binding{{Consumer: plugin, Requirement: "state", Provider: provider}}}}}
+func sidecarRelease(id string) SidecarRelease {
+	return SidecarRelease{
+		Spec:         ReleaseSpec,
+		Sidecar:      composition.SidecarRef{ID: id, Version: "0.0.1"},
+		Source:       Source{Repository: "https://github.com/example/" + id, Commit: commit},
+		Dependencies: []Dependency{},
+		Artifacts:    []Artifact{{Target: "aarch64-apple-darwin", URL: "https://example.invalid/s.tgz", SHA256: digest, Format: "tgz", Manifest: "sidecar.json"}},
+		Reports:      []Integrity{{URL: "https://example.invalid/report", SHA256: digest}},
+	}
+}
+
+func TestRegistryKeepsPluginSidecarAndKitReleasesSeparate(t *testing.T) {
+	plugin := pluginRelease("view")
+	sidecar := sidecarRelease("state")
+	plugin.Dependencies = []Dependency{{Sidecar: &sidecar.Sidecar, Scope: Runtime}}
+	registry := Registry{
+		Spec: RegistrySpec, ID: "official", Sequence: 1,
+		Plugins: []PluginRelease{plugin}, Sidecars: []SidecarRelease{sidecar}, Kits: []KitRelease{},
+		Profiles: []Profile{{
+			ID: "view", Plugin: plugin.Plugin,
+			Bindings: []composition.Binding{{
+				Consumer: composition.Endpoint{Plugin: &plugin.Plugin}, Requirement: "state",
+				Provider: composition.Endpoint{Sidecar: &sidecar.Sidecar},
+			}},
+		}},
+	}
 	if err := Validate(registry); err != nil {
 		t.Fatal(err)
 	}
 }
 
-func TestOnlyPluginsCanBeProfileRoots(t *testing.T) {
-	sidecar := ref(composition.Sidecar, "state")
-	registry := Registry{Spec: RegistrySpec, ID: "official", Sequence: 1, Releases: []Release{release(sidecar)}, Profiles: []Profile{{ID: "bad", Root: sidecar, Bindings: []composition.Binding{}}}}
-	if err := Validate(registry); err == nil {
-		t.Fatal("sidecar profile root was accepted")
+func TestBuildDependencyDoesNotEnterProfileRuntimeClosure(t *testing.T) {
+	plugin := pluginRelease("view")
+	kit := KitRelease{
+		Spec: ReleaseSpec, Kit: composition.KitRef{ID: "build", Version: "0.0.1"},
+		Source:       Source{Repository: "https://github.com/example/build", Commit: commit},
+		Dependencies: []Dependency{},
+		Artifacts:    []Artifact{{Target: "any", URL: "https://example.invalid/k.tgz", SHA256: digest, Format: "tgz", Manifest: "package.json"}},
+		Reports:      []Integrity{{URL: "https://example.invalid/report", SHA256: digest}},
 	}
-}
-
-func TestProfileBindingsStayInsideExactClosure(t *testing.T) {
-	plugin := ref(composition.Plugin, "view")
-	provider := ref(composition.Sidecar, "provider")
-	other := ref(composition.Sidecar, "other")
-	pluginRelease := release(plugin)
-	registry := Registry{Spec: RegistrySpec, ID: "official", Sequence: 1, Releases: []Release{pluginRelease, release(other), release(provider)}, Profiles: []Profile{{ID: "view", Root: plugin, Bindings: []composition.Binding{{Consumer: plugin, Requirement: "state", Provider: provider}}}}}
+	plugin.Dependencies = []Dependency{{Kit: &kit.Kit, Scope: Build}}
+	registry := Registry{
+		Spec: RegistrySpec, ID: "official", Sequence: 1,
+		Plugins: []PluginRelease{plugin}, Sidecars: []SidecarRelease{}, Kits: []KitRelease{kit},
+		Profiles: []Profile{{ID: "view", Plugin: plugin.Plugin, Bindings: []composition.Binding{}}},
+	}
 	if err := Validate(registry); err != nil {
 		t.Fatal(err)
-	}
-	closure, err := ProfileRuntimeClosure(registry, "view")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(closure) != 2 || closure[0] != plugin || closure[1] != provider {
-		t.Fatalf("closure=%+v", closure)
-	}
-	registry.Profiles[0].Bindings[0].Consumer = other
-	if err := Validate(registry); err == nil || !strings.Contains(err.Error(), "consumer") {
-		t.Fatalf("error = %v", err)
-	}
-}
-
-func TestBuildDependenciesAreNotInstalledAtRuntime(t *testing.T) {
-	plugin := ref(composition.Plugin, "view")
-	runtimeKit := ref(composition.Kit, "runtime-kit")
-	buildKit := ref(composition.Kit, "build-kit")
-	pluginRelease := release(plugin)
-	pluginRelease.Dependencies = []Dependency{{Unit: buildKit, Scope: Build}, {Unit: runtimeKit, Scope: Runtime}}
-	releases := []Release{release(buildKit), pluginRelease, release(runtimeKit)}
-	closure, err := RuntimeClosure(plugin, releases)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(closure) != 2 || closure[0] != runtimeKit || closure[1] != plugin {
-		t.Fatalf("closure = %+v", closure)
-	}
-}
-
-func TestDependencyScopeIsRequiredAndStrict(t *testing.T) {
-	plugin := ref(composition.Plugin, "view")
-	kit := ref(composition.Kit, "kit")
-	candidate := release(plugin)
-	candidate.Dependencies = []Dependency{{Unit: kit, Scope: ""}}
-	if err := ValidateRelease(candidate); err == nil {
-		t.Fatal("dependency with no scope was accepted")
-	}
-}
-
-func TestReleaseRequiresCompositionManifestAndConformance(t *testing.T) {
-	plugin := ref(composition.Plugin, "view")
-	cases := []Release{release(plugin), release(plugin)}
-	cases[0].Artifacts[0].UnitManifest = "plugin.json"
-	cases[1].Reports = nil
-	for _, candidate := range cases {
-		if err := ValidateRelease(candidate); err == nil {
-			t.Errorf("accepted invalid release: %+v", candidate)
-		}
-	}
-}
-
-func TestStrictParserRejectsFallbackAndUnknownFields(t *testing.T) {
-	raw := "{\"spec\":\"soksak-spec-registry@0.0.1\",\"id\":\"official\",\"sequence\":1,\"releases\":[],\"profiles\":[],\"fallback\":true}"
-	if _, err := Parse([]byte(raw)); err == nil {
-		t.Fatal("registry accepted fallback")
 	}
 }

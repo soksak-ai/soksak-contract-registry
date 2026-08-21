@@ -1,8 +1,9 @@
 # Soksak plugin registry contract 0.0.1
 
 The registry exposes plugins to users and retains sidecar and kit releases only as dependency
-closure nodes. Every release has exact identity, immutable source commit, exact dependencies,
-targeted archives containing soksak-unit.json and conformance report references.
+closure nodes. Plugin, sidecar and kit releases are separate document types. Every release has exact
+identity, immutable source commit, exact dependencies, targeted archives containing its own
+kind-specific manifest and conformance report references.
 
 Every dependency declares runtime or build scope. Runtime dependencies enter the installer closure
 and settings composition. Build dependencies record reproducibility of the owner artifact and are
