@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	composition "github.com/soksak/soksak-contract-composition"
+	composition "github.com/soksak-ai/soksak-contract-composition"
 )
 
 const commit = "0123456789abcdef0123456789abcdef01234567"
