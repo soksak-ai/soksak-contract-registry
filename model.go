@@ -7,6 +7,7 @@ import (
 	"io"
 	"regexp"
 	"sort"
+	"strings"
 )
 
 type PluginReference struct {
@@ -89,6 +90,8 @@ var idPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,127}$`)
 var registryPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
 var commitPattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
 var digestPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
+var semverPattern = regexp.MustCompile(`^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$`)
+var repositoryPattern = regexp.MustCompile(`^https://github\.com/[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?/[A-Za-z0-9][A-Za-z0-9._-]{0,99}$`)
 
 func Parse(body []byte) (Registry, error) {
 	decoder := json.NewDecoder(bytes.NewReader(body))
@@ -152,10 +155,10 @@ func Validate(value Registry) error {
 
 func validateRelease(kind, id, version string, source Source, artifacts []Artifact, reports []Integrity, manifest string, native bool) error {
 	key := kind + ":" + id + "@" + version
-	if !idPattern.MatchString(id) || version != "0.0.1" {
+	if !idPattern.MatchString(id) || !semverPattern.MatchString(version) {
 		return fmt.Errorf("invalid release %s", key)
 	}
-	if source.Repository == "" || !commitPattern.MatchString(source.Commit) {
+	if !repositoryPattern.MatchString(source.Repository) || !commitPattern.MatchString(source.Commit) {
 		return fmt.Errorf("invalid source %s", key)
 	}
 	if len(artifacts) == 0 || len(reports) == 0 {
@@ -163,7 +166,7 @@ func validateRelease(kind, id, version string, source Source, artifacts []Artifa
 	}
 	targets := []string{}
 	for _, artifact := range artifacts {
-		if artifact.Target == "" || artifact.URL == "" || artifact.Size == 0 || !digestPattern.MatchString(artifact.SHA256) || (artifact.Format != "tgz" && artifact.Format != "tar.gz") || artifact.Manifest != manifest {
+		if artifact.Target == "" || !releaseURL(artifact.URL, source.Repository, version) || artifact.Size == 0 || !digestPattern.MatchString(artifact.SHA256) || (artifact.Format != "tgz" && artifact.Format != "tar.gz") || artifact.Manifest != manifest {
 			return fmt.Errorf("invalid artifact %s", key)
 		}
 		if !native && artifact.Target != "any" {
@@ -176,7 +179,7 @@ func validateRelease(kind, id, version string, source Source, artifacts []Artifa
 	}
 	urls := []string{}
 	for _, report := range reports {
-		if report.URL == "" || !digestPattern.MatchString(report.SHA256) {
+		if !releaseURL(report.URL, source.Repository, version) || !digestPattern.MatchString(report.SHA256) {
 			return fmt.Errorf("invalid report %s", key)
 		}
 		urls = append(urls, report.URL)
@@ -185,6 +188,11 @@ func validateRelease(kind, id, version string, source Source, artifacts []Artifa
 		return fmt.Errorf("reports must be sorted and unique")
 	}
 	return nil
+}
+
+func releaseURL(value, repository, version string) bool {
+	prefix := repository + "/releases/download/v" + version + "/"
+	return strings.HasPrefix(value, prefix) && len(value) > len(prefix) && !strings.ContainsAny(value, "?#")
 }
 
 func sortedUnique(values []string) bool {
