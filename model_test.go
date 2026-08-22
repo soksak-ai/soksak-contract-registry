@@ -54,6 +54,35 @@ func TestRegistryAcceptsFiveDirectReleaseArrays(t *testing.T) {
 	}
 }
 
+func TestRegistryAcceptsMultipleDirectReleaseKinds(t *testing.T) {
+	plugin := pluginRelease("view", 10)
+	repository := "https://github.com/example/state"
+	sidecar := SidecarRelease{
+		Sidecar:   SidecarReference{ID: "state", Version: "0.0.1"},
+		Source:    Source{Repository: repository, Commit: commit},
+		Artifacts: []Artifact{{Target: "x86_64-pc-windows-msvc", URL: repository + "/releases/download/v0.0.1/state.tar.gz", Size: 10, SHA256: digest, Format: "tar.gz", Manifest: "sidecar.json"}},
+		Reports:   []Integrity{{URL: repository + "/releases/download/v0.0.1/report.json", SHA256: digest}},
+	}
+	kitRepository := "https://github.com/example/kit"
+	kit := KitRelease{
+		Kit:       KitReference{ID: "kit", Version: "0.0.1"},
+		Source:    Source{Repository: kitRepository, Commit: commit},
+		Artifacts: []Artifact{{Target: "any", URL: kitRepository + "/releases/download/v0.0.1/kit.tgz", Size: 10, SHA256: digest, Format: "tgz", Manifest: "kit.json"}},
+		Reports:   []Integrity{{URL: kitRepository + "/releases/download/v0.0.1/report.json", SHA256: digest}},
+	}
+	value := Registry{ID: "official", Sequence: 1, Plugins: []PluginRelease{plugin}, Sidecars: []SidecarRelease{sidecar}, Kits: []KitRelease{kit}, Contracts: []ContractRelease{}, Specs: []SpecRelease{}}
+	if err := Validate(value); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRegistryRejectsUnsortedReleasesWithinTheirKind(t *testing.T) {
+	value := Registry{ID: "official", Sequence: 1, Plugins: []PluginRelease{pluginRelease("z-view", 10), pluginRelease("a-view", 10)}, Sidecars: []SidecarRelease{}, Kits: []KitRelease{}, Contracts: []ContractRelease{}, Specs: []SpecRelease{}}
+	if err := Validate(value); err == nil {
+		t.Fatal("unsorted plugin releases were accepted")
+	}
+}
+
 func TestRegistryRejectsArtifactWithoutSize(t *testing.T) {
 	value := Registry{ID: "official", Sequence: 1, Plugins: []PluginRelease{pluginRelease("view", 0)}, Sidecars: []SidecarRelease{}, Kits: []KitRelease{}, Contracts: []ContractRelease{}, Specs: []SpecRelease{}}
 	if err := Validate(value); err == nil {

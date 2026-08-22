@@ -116,39 +116,45 @@ func Validate(value Registry) error {
 	if value.Plugins == nil || value.Sidecars == nil || value.Kits == nil || value.Contracts == nil || value.Specs == nil {
 		return fmt.Errorf("all direct release arrays are required")
 	}
-	keys := []string{}
+	pluginKeys := []string{}
 	for _, release := range value.Plugins {
 		if err := validateRelease("plugin", release.Plugin.ID, release.Plugin.Version, release.Source, release.Artifacts, release.Reports, "plugin.json", false); err != nil {
 			return err
 		}
-		keys = append(keys, "plugin:"+release.Plugin.ID+"@"+release.Plugin.Version)
+		pluginKeys = append(pluginKeys, release.Plugin.ID+"@"+release.Plugin.Version)
 	}
+	sidecarKeys := []string{}
 	for _, release := range value.Sidecars {
 		if err := validateRelease("sidecar", release.Sidecar.ID, release.Sidecar.Version, release.Source, release.Artifacts, release.Reports, "sidecar.json", true); err != nil {
 			return err
 		}
-		keys = append(keys, "sidecar:"+release.Sidecar.ID+"@"+release.Sidecar.Version)
+		sidecarKeys = append(sidecarKeys, release.Sidecar.ID+"@"+release.Sidecar.Version)
 	}
+	kitKeys := []string{}
 	for _, release := range value.Kits {
 		if err := validateRelease("kit", release.Kit.ID, release.Kit.Version, release.Source, release.Artifacts, release.Reports, "kit.json", false); err != nil {
 			return err
 		}
-		keys = append(keys, "kit:"+release.Kit.ID+"@"+release.Kit.Version)
+		kitKeys = append(kitKeys, release.Kit.ID+"@"+release.Kit.Version)
 	}
+	contractKeys := []string{}
 	for _, release := range value.Contracts {
 		if err := validateRelease("contract", release.Contract.ID, release.Contract.Version, release.Source, release.Artifacts, release.Reports, "contract.json", false); err != nil {
 			return err
 		}
-		keys = append(keys, "contract:"+release.Contract.ID+"@"+release.Contract.Version)
+		contractKeys = append(contractKeys, release.Contract.ID+"@"+release.Contract.Version)
 	}
+	specKeys := []string{}
 	for _, release := range value.Specs {
 		if err := validateRelease("spec", release.Spec.ID, release.Spec.Version, release.Source, release.Artifacts, release.Reports, "spec.json", false); err != nil {
 			return err
 		}
-		keys = append(keys, "spec:"+release.Spec.ID+"@"+release.Spec.Version)
+		specKeys = append(specKeys, release.Spec.ID+"@"+release.Spec.Version)
 	}
-	if !sortedUnique(keys) {
-		return fmt.Errorf("releases must be globally sorted and unique")
+	for kind, keys := range map[string][]string{"plugin": pluginKeys, "sidecar": sidecarKeys, "kit": kitKeys, "contract": contractKeys, "spec": specKeys} {
+		if !sortedUnique(keys) {
+			return fmt.Errorf("%s releases must be sorted and unique", kind)
+		}
 	}
 	return nil
 }
