@@ -121,35 +121,35 @@ func Validate(value Registry) error {
 		if err := validateRelease("plugin", release.Plugin.ID, release.Plugin.Version, release.Source, release.Artifacts, release.Reports, "plugin.json", false); err != nil {
 			return err
 		}
-		pluginKeys = append(pluginKeys, release.Plugin.ID+"@"+release.Plugin.Version)
+		pluginKeys = append(pluginKeys, release.Plugin.ID)
 	}
 	sidecarKeys := []string{}
 	for _, release := range value.Sidecars {
 		if err := validateRelease("sidecar", release.Sidecar.ID, release.Sidecar.Version, release.Source, release.Artifacts, release.Reports, "sidecar.json", true); err != nil {
 			return err
 		}
-		sidecarKeys = append(sidecarKeys, release.Sidecar.ID+"@"+release.Sidecar.Version)
+		sidecarKeys = append(sidecarKeys, release.Sidecar.ID)
 	}
 	kitKeys := []string{}
 	for _, release := range value.Kits {
 		if err := validateRelease("kit", release.Kit.ID, release.Kit.Version, release.Source, release.Artifacts, release.Reports, "kit.json", false); err != nil {
 			return err
 		}
-		kitKeys = append(kitKeys, release.Kit.ID+"@"+release.Kit.Version)
+		kitKeys = append(kitKeys, release.Kit.ID)
 	}
 	contractKeys := []string{}
 	for _, release := range value.Contracts {
 		if err := validateRelease("contract", release.Contract.ID, release.Contract.Version, release.Source, release.Artifacts, release.Reports, "contract.json", false); err != nil {
 			return err
 		}
-		contractKeys = append(contractKeys, release.Contract.ID+"@"+release.Contract.Version)
+		contractKeys = append(contractKeys, release.Contract.ID)
 	}
 	specKeys := []string{}
 	for _, release := range value.Specs {
 		if err := validateRelease("spec", release.Spec.ID, release.Spec.Version, release.Source, release.Artifacts, release.Reports, "spec.json", false); err != nil {
 			return err
 		}
-		specKeys = append(specKeys, release.Spec.ID+"@"+release.Spec.Version)
+		specKeys = append(specKeys, release.Spec.ID)
 	}
 	for kind, keys := range map[string][]string{"plugin": pluginKeys, "sidecar": sidecarKeys, "kit": kitKeys, "contract": contractKeys, "spec": specKeys} {
 		if !sortedUnique(keys) {

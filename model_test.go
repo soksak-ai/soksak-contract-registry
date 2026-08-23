@@ -83,6 +83,18 @@ func TestRegistryRejectsUnsortedReleasesWithinTheirKind(t *testing.T) {
 	}
 }
 
+func TestRegistryRejectsReleaseHistoryForOneComponent(t *testing.T) {
+	older := pluginRelease("view", 10)
+	newer := pluginRelease("view", 10)
+	newer.Plugin.Version = "0.0.2"
+	newer.Artifacts[0].URL = "https://github.com/example/view/releases/download/v0.0.2/view.tgz"
+	newer.Reports[0].URL = "https://github.com/example/view/releases/download/v0.0.2/report.json"
+	value := Registry{ID: "official", Sequence: 1, Plugins: []PluginRelease{older, newer}, Sidecars: []SidecarRelease{}, Kits: []KitRelease{}, Contracts: []ContractRelease{}, Specs: []SpecRelease{}}
+	if err := Validate(value); err == nil {
+		t.Fatal("registry accepted two current releases for one component id")
+	}
+}
+
 func TestRegistryRejectsArtifactWithoutSize(t *testing.T) {
 	value := Registry{ID: "official", Sequence: 1, Plugins: []PluginRelease{pluginRelease("view", 0)}, Sidecars: []SidecarRelease{}, Kits: []KitRelease{}, Contracts: []ContractRelease{}, Specs: []SpecRelease{}}
 	if err := Validate(value); err == nil {

@@ -5,6 +5,9 @@ release has an exact identity, immutable source commit, artifact byte size and S
 manifest, and conformance report references. Release documents do not contain dependency scopes,
 install profiles, or provider bindings.
 
+Each array contains at most one current release per component id. Publishing a newer release
+replaces that id in the catalogue; immutable owner releases and Git retain history.
+
 Runtime requirements belong to owner manifests. User activation, development paths, and provider
 selection belong to settings. Installed paths and artifact digests belong to the Core installation
 record. The normative version rules are in `soksak-spec/packages/plugin-spec/docs/VERSIONING.md`.
