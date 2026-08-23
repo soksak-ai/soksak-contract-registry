@@ -12,15 +12,6 @@ import (
 	"time"
 )
 
-type SignedRegistry struct {
-	Registry
-	IssuedAt  string `json:"issuedAt"`
-	ExpiresAt string `json:"expiresAt"`
-	Algorithm string `json:"algorithm"`
-	KeyID     string `json:"keyId"`
-	Signature string `json:"signature"`
-}
-
 type Trust struct {
 	RegistryID string
 	KeyID      string
@@ -36,26 +27,29 @@ type Verification struct {
 	Continuity string `json:"continuity"`
 }
 
-func Sign(document *SignedRegistry, private ed25519.PrivateKey) error {
-	if document.Algorithm != "ed25519" || document.KeyID == "" {
+func Sign(document *Registry, private ed25519.PrivateKey) error {
+	if document.Signature.Algorithm != "ed25519" || document.Signature.KeyID == "" {
 		return fmt.Errorf("invalid signature identity")
 	}
-	if err := Validate(document.Registry); err != nil {
+	placeholder := document.Signature.Value
+	document.Signature.Value = base64.StdEncoding.EncodeToString(make([]byte, ed25519.SignatureSize))
+	if err := Validate(*document); err != nil {
+		document.Signature.Value = placeholder
 		return err
 	}
 	payload, err := signedPayload(*document)
 	if err != nil {
 		return err
 	}
-	document.Signature = base64.StdEncoding.EncodeToString(ed25519.Sign(private, payload))
+	document.Signature.Value = base64.StdEncoding.EncodeToString(ed25519.Sign(private, payload))
 	return nil
 }
 
-func Verify(document SignedRegistry, trust Trust, now time.Time, highWater *HighWater) (Verification, error) {
-	if err := Validate(document.Registry); err != nil {
+func Verify(document Registry, trust Trust, now time.Time, highWater *HighWater) (Verification, error) {
+	if err := Validate(document); err != nil {
 		return Verification{}, err
 	}
-	if document.ID != trust.RegistryID || document.KeyID != trust.KeyID || document.Algorithm != "ed25519" || len(trust.PublicKey) != ed25519.PublicKeySize {
+	if document.ID != trust.RegistryID || document.Signature.KeyID != trust.KeyID || document.Signature.Algorithm != "ed25519" || len(trust.PublicKey) != ed25519.PublicKeySize {
 		return Verification{}, fmt.Errorf("registry trust identity mismatch")
 	}
 	issued, err := time.Parse(time.RFC3339, document.IssuedAt)
@@ -73,7 +67,7 @@ func Verify(document SignedRegistry, trust Trust, now time.Time, highWater *High
 	if err != nil {
 		return Verification{}, err
 	}
-	signature, err := base64.StdEncoding.DecodeString(document.Signature)
+	signature, err := base64.StdEncoding.DecodeString(document.Signature.Value)
 	if err != nil || len(signature) != ed25519.SignatureSize || !ed25519.Verify(trust.PublicKey, payload, signature) {
 		return Verification{}, fmt.Errorf("registry signature is invalid")
 	}
@@ -96,14 +90,14 @@ func Verify(document SignedRegistry, trust Trust, now time.Time, highWater *High
 	return Verification{Sequence: document.Sequence, Digest: digest, Continuity: continuity}, nil
 }
 
-func signedPayload(document SignedRegistry) ([]byte, error) {
+func signedPayload(document Registry) ([]byte, error) {
 	value := struct {
-		Registry  Registry `json:"registry"`
+		ID        string   `json:"id"`
+		Sequence  uint64   `json:"sequence"`
 		IssuedAt  string   `json:"issuedAt"`
 		ExpiresAt string   `json:"expiresAt"`
-		Algorithm string   `json:"algorithm"`
-		KeyID     string   `json:"keyId"`
-	}{document.Registry, document.IssuedAt, document.ExpiresAt, document.Algorithm, document.KeyID}
+		Plugins   []Plugin `json:"plugins"`
+	}{document.ID, document.Sequence, document.IssuedAt, document.ExpiresAt, document.Plugins}
 	return canonicalJSON(value)
 }
 func canonicalJSON(value any) ([]byte, error) {

@@ -2,96 +2,49 @@ package registry
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"regexp"
 	"sort"
-	"strings"
+	"time"
 )
 
-type PluginReference struct {
+type ReleaseReference struct {
 	ID      string `json:"id"`
 	Version string `json:"version"`
+	URL     string `json:"url"`
+	Size    uint64 `json:"size"`
+	SHA256  string `json:"sha256"`
 }
-type SidecarReference struct {
-	ID      string `json:"id"`
-	Version string `json:"version"`
+type RuntimeDependencies struct {
+	Plugins  []ReleaseReference `json:"plugins,omitempty"`
+	Sidecars []ReleaseReference `json:"sidecars,omitempty"`
 }
-type KitReference struct {
-	ID      string `json:"id"`
-	Version string `json:"version"`
+type Plugin struct {
+	ReleaseReference
+	RuntimeDependencies *RuntimeDependencies `json:"runtimeDependencies,omitempty"`
 }
-type ContractReference struct {
-	ID      string `json:"id"`
-	Version string `json:"version"`
-}
-type SpecReference struct {
-	ID      string `json:"id"`
-	Version string `json:"version"`
-}
-type Source struct {
-	Repository string `json:"repository"`
-	Commit     string `json:"commit"`
-}
-type Integrity struct {
-	URL    string `json:"url"`
-	SHA256 string `json:"sha256"`
-}
-type Artifact struct {
-	Target   string `json:"target"`
-	URL      string `json:"url"`
-	Size     uint64 `json:"size"`
-	SHA256   string `json:"sha256"`
-	Format   string `json:"format"`
-	Manifest string `json:"manifest"`
-}
-type PluginRelease struct {
-	Plugin    PluginReference `json:"plugin"`
-	Source    Source          `json:"source"`
-	Artifacts []Artifact      `json:"artifacts"`
-	Reports   []Integrity     `json:"reports"`
-}
-type SidecarRelease struct {
-	Sidecar   SidecarReference `json:"sidecar"`
-	Source    Source           `json:"source"`
-	Artifacts []Artifact       `json:"artifacts"`
-	Reports   []Integrity      `json:"reports"`
-}
-type KitRelease struct {
-	Kit       KitReference `json:"kit"`
-	Source    Source       `json:"source"`
-	Artifacts []Artifact   `json:"artifacts"`
-	Reports   []Integrity  `json:"reports"`
-}
-type ContractRelease struct {
-	Contract  ContractReference `json:"contract"`
-	Source    Source            `json:"source"`
-	Artifacts []Artifact        `json:"artifacts"`
-	Reports   []Integrity       `json:"reports"`
-}
-type SpecRelease struct {
-	Spec      SpecReference `json:"spec"`
-	Source    Source        `json:"source"`
-	Artifacts []Artifact    `json:"artifacts"`
-	Reports   []Integrity   `json:"reports"`
+type Signature struct {
+	Algorithm string `json:"algorithm"`
+	KeyID     string `json:"keyId"`
+	Value     string `json:"value"`
 }
 type Registry struct {
-	ID        string            `json:"id"`
-	Sequence  uint64            `json:"sequence"`
-	Plugins   []PluginRelease   `json:"plugins"`
-	Sidecars  []SidecarRelease  `json:"sidecars"`
-	Kits      []KitRelease      `json:"kits"`
-	Contracts []ContractRelease `json:"contracts"`
-	Specs     []SpecRelease     `json:"specs"`
+	ID        string    `json:"id"`
+	Sequence  uint64    `json:"sequence"`
+	IssuedAt  string    `json:"issuedAt"`
+	ExpiresAt string    `json:"expiresAt"`
+	Plugins   []Plugin  `json:"plugins"`
+	Signature Signature `json:"signature"`
 }
 
 var idPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,127}$`)
 var registryPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
-var commitPattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
 var digestPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 var semverPattern = regexp.MustCompile(`^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$`)
-var repositoryPattern = regexp.MustCompile(`^https://github\.com/[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?/[A-Za-z0-9][A-Za-z0-9._-]{0,99}$`)
+var releaseURLPattern = regexp.MustCompile(`^https://github\.com/[A-Za-z0-9-]+/([A-Za-z0-9._-]+)/releases/download/v([^/]+)/release\.json$`)
 
 func Parse(body []byte) (Registry, error) {
 	decoder := json.NewDecoder(bytes.NewReader(body))
@@ -108,99 +61,68 @@ func Parse(body []byte) (Registry, error) {
 	}
 	return value, nil
 }
-
 func Validate(value Registry) error {
 	if !registryPattern.MatchString(value.ID) || value.Sequence < 1 {
 		return fmt.Errorf("invalid registry identity")
 	}
-	if value.Plugins == nil || value.Sidecars == nil || value.Kits == nil || value.Contracts == nil || value.Specs == nil {
-		return fmt.Errorf("all direct release arrays are required")
+	issued, err := time.Parse(time.RFC3339, value.IssuedAt)
+	if err != nil {
+		return fmt.Errorf("invalid issuedAt")
 	}
-	pluginKeys := []string{}
-	for _, release := range value.Plugins {
-		if err := validateRelease("plugin", release.Plugin.ID, release.Plugin.Version, release.Source, release.Artifacts, release.Reports, "plugin.json", false); err != nil {
+	expires, err := time.Parse(time.RFC3339, value.ExpiresAt)
+	if err != nil || !expires.After(issued) {
+		return fmt.Errorf("invalid expiresAt")
+	}
+	if value.Plugins == nil {
+		return fmt.Errorf("plugins are required")
+	}
+	ids := make([]string, 0, len(value.Plugins))
+	for _, plugin := range value.Plugins {
+		if err := validateReference(plugin.ReleaseReference); err != nil {
 			return err
 		}
-		pluginKeys = append(pluginKeys, release.Plugin.ID)
-	}
-	sidecarKeys := []string{}
-	for _, release := range value.Sidecars {
-		if err := validateRelease("sidecar", release.Sidecar.ID, release.Sidecar.Version, release.Source, release.Artifacts, release.Reports, "sidecar.json", true); err != nil {
-			return err
+		ids = append(ids, plugin.ID)
+		if plugin.RuntimeDependencies != nil {
+			if err := validateReferences(plugin.RuntimeDependencies.Plugins, "plugin"); err != nil {
+				return err
+			}
+			if err := validateReferences(plugin.RuntimeDependencies.Sidecars, "sidecar"); err != nil {
+				return err
+			}
+			if len(plugin.RuntimeDependencies.Plugins) == 0 && len(plugin.RuntimeDependencies.Sidecars) == 0 {
+				return fmt.Errorf("empty runtimeDependencies")
+			}
 		}
-		sidecarKeys = append(sidecarKeys, release.Sidecar.ID)
 	}
-	kitKeys := []string{}
-	for _, release := range value.Kits {
-		if err := validateRelease("kit", release.Kit.ID, release.Kit.Version, release.Source, release.Artifacts, release.Reports, "kit.json", false); err != nil {
-			return err
-		}
-		kitKeys = append(kitKeys, release.Kit.ID)
+	if !sortedUnique(ids) {
+		return fmt.Errorf("plugins must be sorted and unique by id")
 	}
-	contractKeys := []string{}
-	for _, release := range value.Contracts {
-		if err := validateRelease("contract", release.Contract.ID, release.Contract.Version, release.Source, release.Artifacts, release.Reports, "contract.json", false); err != nil {
-			return err
-		}
-		contractKeys = append(contractKeys, release.Contract.ID)
-	}
-	specKeys := []string{}
-	for _, release := range value.Specs {
-		if err := validateRelease("spec", release.Spec.ID, release.Spec.Version, release.Source, release.Artifacts, release.Reports, "spec.json", false); err != nil {
-			return err
-		}
-		specKeys = append(specKeys, release.Spec.ID)
-	}
-	for kind, keys := range map[string][]string{"plugin": pluginKeys, "sidecar": sidecarKeys, "kit": kitKeys, "contract": contractKeys, "spec": specKeys} {
-		if !sortedUnique(keys) {
-			return fmt.Errorf("%s releases must be sorted and unique", kind)
-		}
+	decoded, err := base64.StdEncoding.DecodeString(value.Signature.Value)
+	if value.Signature.Algorithm != "ed25519" || value.Signature.KeyID == "" || err != nil || len(decoded) != 64 {
+		return fmt.Errorf("invalid registry signature shape")
 	}
 	return nil
 }
-
-func validateRelease(kind, id, version string, source Source, artifacts []Artifact, reports []Integrity, manifest string, native bool) error {
-	key := kind + ":" + id + "@" + version
-	if !idPattern.MatchString(id) || !semverPattern.MatchString(version) {
-		return fmt.Errorf("invalid release %s", key)
-	}
-	if !repositoryPattern.MatchString(source.Repository) || !commitPattern.MatchString(source.Commit) {
-		return fmt.Errorf("invalid source %s", key)
-	}
-	if len(artifacts) == 0 || len(reports) == 0 {
-		return fmt.Errorf("incomplete release %s", key)
-	}
-	targets := []string{}
-	for _, artifact := range artifacts {
-		if artifact.Target == "" || !releaseURL(artifact.URL, source.Repository, version) || artifact.Size == 0 || !digestPattern.MatchString(artifact.SHA256) || (artifact.Format != "tgz" && artifact.Format != "tar.gz") || artifact.Manifest != manifest {
-			return fmt.Errorf("invalid artifact %s", key)
+func validateReferences(values []ReleaseReference, kind string) error {
+	keys := make([]string, 0, len(values))
+	for _, value := range values {
+		if err := validateReference(value); err != nil {
+			return err
 		}
-		if !native && artifact.Target != "any" {
-			return fmt.Errorf("portable release has native target %s", key)
-		}
-		targets = append(targets, artifact.Target)
+		keys = append(keys, value.ID+"@"+value.Version)
 	}
-	if !sortedUnique(targets) {
-		return fmt.Errorf("artifacts must be sorted and unique")
-	}
-	urls := []string{}
-	for _, report := range reports {
-		if !releaseURL(report.URL, source.Repository, version) || !digestPattern.MatchString(report.SHA256) {
-			return fmt.Errorf("invalid report %s", key)
-		}
-		urls = append(urls, report.URL)
-	}
-	if !sortedUnique(urls) {
-		return fmt.Errorf("reports must be sorted and unique")
+	if len(values) > 0 && !sortedUnique(keys) {
+		return fmt.Errorf("%s dependencies must be sorted and unique", kind)
 	}
 	return nil
 }
-
-func releaseURL(value, repository, version string) bool {
-	prefix := repository + "/releases/download/v" + version + "/"
-	return strings.HasPrefix(value, prefix) && len(value) > len(prefix) && !strings.ContainsAny(value, "?#")
+func validateReference(value ReleaseReference) error {
+	match := releaseURLPattern.FindStringSubmatch(value.URL)
+	if !idPattern.MatchString(value.ID) || !semverPattern.MatchString(value.Version) || value.Size == 0 || !digestPattern.MatchString(value.SHA256) || len(match) != 3 || match[1] != value.ID || match[2] != value.Version {
+		return fmt.Errorf("invalid release reference %s@%s", value.ID, value.Version)
+	}
+	return nil
 }
-
 func sortedUnique(values []string) bool {
 	if !sort.StringsAreSorted(values) {
 		return false

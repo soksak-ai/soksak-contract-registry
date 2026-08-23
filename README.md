@@ -1,8 +1,8 @@
 # soksak-contract-registry
 
-Validation and signing rules for exact plugin, sidecar, kit, contract, and spec releases published
-by soksak-plugin-registry. Component manifests remain at the versions they declare; immutable
-release identities use strict SemVer and each asset URL must use that release's exact tag.
+Authentication and continuity rules for the Soksak plugin registry. The registry contains one
+current release reference per plugin and projects only that plugin's exact direct runtime
+dependencies. Component details remain in immutable owner releases.
 
-The registry is the current install catalogue, not release history. Each component kind contains
-at most one release per component id. Git history and immutable owner releases retain older bytes.
+The registry is authenticated by definition. Consumers pin its identity, key ID, and public key,
+then reject invalid signatures, expiry, rollback, and equivocation.

@@ -1,16 +1,15 @@
 # Soksak plugin registry contract 0.0.1
 
-The registry publishes separate plugin, sidecar, kit, contract, and spec release arrays. Every
-release has an exact identity, immutable source commit, artifact byte size and SHA-256, its own
-manifest, and conformance report references. Release documents do not contain dependency scopes,
-install profiles, or provider bindings.
+The registry publishes a plugins array. Every item is one flat immutable release reference and may
+project exact direct plugin and sidecar runtime dependencies from that plugin release. It contains
+no independent component arrays, install summaries, provider bindings, or release history.
 
-Each array contains at most one current release per component id. Publishing a newer release
-replaces that id in the catalogue; immutable owner releases and Git retain history.
+The plugins array contains one current release per plugin id. Publishing a newer release replaces
+that id in the catalogue; immutable owner releases and Git retain history.
 
-Runtime requirements belong to owner manifests. User activation, development paths, and provider
-selection belong to settings. Installed paths and artifact digests belong to the Core installation
-record. The normative version rules are in `soksak-spec/packages/plugin-spec/docs/VERSIONING.md`.
+Runtime dependencies belong to owner manifests and use exact release references. User activation
+and development paths belong to the local environment. The normative distribution rules are in
+`soksak-spec/packages/plugin-spec/docs/PLUGIN-DISTRIBUTION.md`.
 
 Each owner repository creates and verifies its release and conformance reports. The registry reads
 immutable release documents and never reads or builds owner source trees.

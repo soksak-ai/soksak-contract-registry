@@ -1,103 +1,33 @@
 package registry
 
-import "testing"
+import (
+	"encoding/base64"
+	"testing"
+)
 
-const commit = "0123456789abcdef0123456789abcdef01234567"
-const digest = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-
-func pluginRelease(id string, size uint64) PluginRelease {
-	repository := "https://github.com/example/" + id
-	return PluginRelease{
-		Plugin:    PluginReference{ID: id, Version: "0.0.1"},
-		Source:    Source{Repository: repository, Commit: commit},
-		Artifacts: []Artifact{{Target: "any", URL: repository + "/releases/download/v0.0.1/view.tgz", Size: size, SHA256: digest, Format: "tgz", Manifest: "plugin.json"}},
-		Reports:   []Integrity{{URL: repository + "/releases/download/v0.0.1/report.json", SHA256: digest}},
-	}
+func reference(id string) ReleaseReference {
+	return ReleaseReference{ID: id, Version: "0.0.1", URL: "https://github.com/example/" + id + "/releases/download/v0.0.1/release.json", Size: 1, SHA256: "a" + string(make([]byte, 0)) + "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
 }
-
-func TestRegistryAcceptsAPatchSpecReleaseAndBindsItsTag(t *testing.T) {
-	repository := "https://github.com/soksak-ai/soksak-spec"
-	release := SpecRelease{
-		Spec:   SpecReference{ID: "soksak-spec", Version: "0.0.2"},
-		Source: Source{Repository: repository, Commit: commit},
-		Artifacts: []Artifact{{
-			Target: "any", URL: repository + "/releases/download/v0.0.2/soksak-ai-plugin-spec-0.0.2.tgz",
-			Size: 10, SHA256: digest, Format: "tgz", Manifest: "spec.json",
-		}},
-		Reports: []Integrity{{URL: repository + "/releases/download/v0.0.2/conformance-release.json", SHA256: digest}},
-	}
-	value := Registry{ID: "official", Sequence: 1, Plugins: []PluginRelease{}, Sidecars: []SidecarRelease{}, Kits: []KitRelease{}, Contracts: []ContractRelease{}, Specs: []SpecRelease{release}}
-	if err := Validate(value); err != nil {
-		t.Fatal(err)
-	}
-	value.Specs[0].Artifacts[0].URL = repository + "/releases/download/v0.0.1/soksak-ai-plugin-spec-0.0.2.tgz"
-	if err := Validate(value); err == nil {
-		t.Fatal("release asset tag does not match the release version")
-	}
+func registryFixture() Registry {
+	return Registry{ID: "official", Sequence: 1, IssuedAt: "2026-08-21T00:00:00Z", ExpiresAt: "2026-09-21T00:00:00Z", Plugins: []Plugin{}, Signature: Signature{Algorithm: "ed25519", KeyID: "test-key", Value: base64.StdEncoding.EncodeToString(make([]byte, 64))}}
 }
-
-func TestRegistryRejectsVersionLocators(t *testing.T) {
-	for _, version := range []string{"^0.0.1", "latest", "0.0"} {
-		release := pluginRelease("view", 10)
-		release.Plugin.Version = version
-		value := Registry{ID: "official", Sequence: 1, Plugins: []PluginRelease{release}, Sidecars: []SidecarRelease{}, Kits: []KitRelease{}, Contracts: []ContractRelease{}, Specs: []SpecRelease{}}
-		if err := Validate(value); err == nil {
-			t.Errorf("accepted version %q", version)
-		}
-	}
-}
-
-func TestRegistryAcceptsFiveDirectReleaseArrays(t *testing.T) {
-	value := Registry{ID: "official", Sequence: 1, Plugins: []PluginRelease{pluginRelease("view", 10)}, Sidecars: []SidecarRelease{}, Kits: []KitRelease{}, Contracts: []ContractRelease{}, Specs: []SpecRelease{}}
+func TestRegistryContainsPluginsAndDirectRuntimeDependenciesOnly(t *testing.T) {
+	value := registryFixture()
+	value.Plugins = []Plugin{{ReleaseReference: reference("weather-plugin"), RuntimeDependencies: &RuntimeDependencies{Sidecars: []ReleaseReference{reference("weather-sidecar")}}}}
 	if err := Validate(value); err != nil {
 		t.Fatal(err)
 	}
 }
-
-func TestRegistryAcceptsMultipleDirectReleaseKinds(t *testing.T) {
-	plugin := pluginRelease("view", 10)
-	repository := "https://github.com/example/state"
-	sidecar := SidecarRelease{
-		Sidecar:   SidecarReference{ID: "state", Version: "0.0.1"},
-		Source:    Source{Repository: repository, Commit: commit},
-		Artifacts: []Artifact{{Target: "x86_64-pc-windows-msvc", URL: repository + "/releases/download/v0.0.1/state.tar.gz", Size: 10, SHA256: digest, Format: "tar.gz", Manifest: "sidecar.json"}},
-		Reports:   []Integrity{{URL: repository + "/releases/download/v0.0.1/report.json", SHA256: digest}},
+func TestRegistryRejectsHistoryAndVersionLocators(t *testing.T) {
+	value := registryFixture()
+	value.Plugins = []Plugin{{ReleaseReference: reference("weather-plugin")}, {ReleaseReference: reference("weather-plugin")}}
+	if Validate(value) == nil {
+		t.Fatal("duplicate plugin accepted")
 	}
-	kitRepository := "https://github.com/example/kit"
-	kit := KitRelease{
-		Kit:       KitReference{ID: "kit", Version: "0.0.1"},
-		Source:    Source{Repository: kitRepository, Commit: commit},
-		Artifacts: []Artifact{{Target: "any", URL: kitRepository + "/releases/download/v0.0.1/kit.tgz", Size: 10, SHA256: digest, Format: "tgz", Manifest: "kit.json"}},
-		Reports:   []Integrity{{URL: kitRepository + "/releases/download/v0.0.1/report.json", SHA256: digest}},
-	}
-	value := Registry{ID: "official", Sequence: 1, Plugins: []PluginRelease{plugin}, Sidecars: []SidecarRelease{sidecar}, Kits: []KitRelease{kit}, Contracts: []ContractRelease{}, Specs: []SpecRelease{}}
-	if err := Validate(value); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestRegistryRejectsUnsortedReleasesWithinTheirKind(t *testing.T) {
-	value := Registry{ID: "official", Sequence: 1, Plugins: []PluginRelease{pluginRelease("z-view", 10), pluginRelease("a-view", 10)}, Sidecars: []SidecarRelease{}, Kits: []KitRelease{}, Contracts: []ContractRelease{}, Specs: []SpecRelease{}}
-	if err := Validate(value); err == nil {
-		t.Fatal("unsorted plugin releases were accepted")
-	}
-}
-
-func TestRegistryRejectsReleaseHistoryForOneComponent(t *testing.T) {
-	older := pluginRelease("view", 10)
-	newer := pluginRelease("view", 10)
-	newer.Plugin.Version = "0.0.2"
-	newer.Artifacts[0].URL = "https://github.com/example/view/releases/download/v0.0.2/view.tgz"
-	newer.Reports[0].URL = "https://github.com/example/view/releases/download/v0.0.2/report.json"
-	value := Registry{ID: "official", Sequence: 1, Plugins: []PluginRelease{older, newer}, Sidecars: []SidecarRelease{}, Kits: []KitRelease{}, Contracts: []ContractRelease{}, Specs: []SpecRelease{}}
-	if err := Validate(value); err == nil {
-		t.Fatal("registry accepted two current releases for one component id")
-	}
-}
-
-func TestRegistryRejectsArtifactWithoutSize(t *testing.T) {
-	value := Registry{ID: "official", Sequence: 1, Plugins: []PluginRelease{pluginRelease("view", 0)}, Sidecars: []SidecarRelease{}, Kits: []KitRelease{}, Contracts: []ContractRelease{}, Specs: []SpecRelease{}}
-	if err := Validate(value); err == nil {
-		t.Fatal("artifact without size was accepted")
+	invalid := reference("weather-plugin")
+	invalid.Version = "latest"
+	value.Plugins = []Plugin{{ReleaseReference: invalid}}
+	if Validate(value) == nil {
+		t.Fatal("latest accepted")
 	}
 }
