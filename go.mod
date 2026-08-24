@@ -1,3 +1,3 @@
 module github.com/soksak-ai/soksak-contract-registry
 
-go 1.25.0
+go 1.26.3
