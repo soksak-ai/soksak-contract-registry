@@ -7,8 +7,12 @@ no independent component arrays, install summaries, provider bindings, or releas
 The plugins array contains one current release per plugin id. Publishing a newer release replaces
 that id in the catalogue; immutable owner releases and Git retain history.
 
-Runtime dependencies belong to owner manifests and use exact release references. User activation
-and development paths belong to the local environment. The normative distribution rules are in
+A release reference is `{ id, version, size, sha256 }`; `size` and `sha256` are of that release's
+`release.json`. No reference carries a location. A `url` key is an unknown field and the document
+is rejected. The reader derives the location from the identity:
+`https://github.com/soksak-ai/<id>/releases/download/v<version>/release.json`. Runtime dependencies
+belong to owner manifests and use exact release references. User activation and development paths
+belong to the local environment. The normative distribution rules are in
 `soksak-spec/packages/plugin-spec/docs/PLUGIN-DISTRIBUTION.md`.
 
 Each owner repository creates and verifies its release and conformance reports. The registry reads

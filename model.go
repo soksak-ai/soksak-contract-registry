@@ -11,11 +11,18 @@ import (
 	"time"
 )
 
+// GitHubOrg is the organization every release is published under.
+const GitHubOrg = "soksak-ai"
+
+// ReleaseReference pins one release; Size and SHA256 are of that release's
+// release.json. No reference carries a location: the reader derives it with
+// ReleaseDocumentURL. This module does not depend on platformspec, so the
+// reference shape and the id, version and digest grammars below restate
+// soksak-spec/go/platformspec/release.go once.
 type ReleaseReference struct {
 	ID      string `json:"id"`
 	Version string `json:"version"`
-	URL     string `json:"url"`
-	Size    uint64 `json:"size"`
+	Size    int64  `json:"size"`
 	SHA256  string `json:"sha256"`
 }
 type RuntimeDependencies struct {
@@ -43,8 +50,15 @@ type Registry struct {
 var idPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,127}$`)
 var registryPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
 var digestPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
-var semverPattern = regexp.MustCompile(`^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$`)
-var releaseURLPattern = regexp.MustCompile(`^https://github\.com/[A-Za-z0-9-]+/([A-Za-z0-9._-]+)/releases/download/v([^/]+)/release\.json$`)
+var strictSemverPattern = regexp.MustCompile(`^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:-(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$`)
+
+const maxSemverLength = 256
+
+// ReleaseDocumentURL derives the published release.json location from the
+// identity: https://github.com/soksak-ai/<id>/releases/download/v<version>/release.json.
+func ReleaseDocumentURL(value ReleaseReference) string {
+	return "https://github.com/" + GitHubOrg + "/" + value.ID + "/releases/download/v" + value.Version + "/release.json"
+}
 
 func Parse(body []byte) (Registry, error) {
 	decoder := json.NewDecoder(bytes.NewReader(body))
@@ -117,11 +131,13 @@ func validateReferences(values []ReleaseReference, kind string) error {
 	return nil
 }
 func validateReference(value ReleaseReference) error {
-	match := releaseURLPattern.FindStringSubmatch(value.URL)
-	if !idPattern.MatchString(value.ID) || !semverPattern.MatchString(value.Version) || value.Size == 0 || !digestPattern.MatchString(value.SHA256) || len(match) != 3 || match[1] != value.ID || match[2] != value.Version {
+	if !idPattern.MatchString(value.ID) || !strictSemver(value.Version) || value.Size <= 0 || !digestPattern.MatchString(value.SHA256) {
 		return fmt.Errorf("invalid release reference %s@%s", value.ID, value.Version)
 	}
 	return nil
+}
+func strictSemver(value string) bool {
+	return len(value) > 0 && len(value) <= maxSemverLength && strictSemverPattern.MatchString(value)
 }
 func sortedUnique(values []string) bool {
 	if !sort.StringsAreSorted(values) {
