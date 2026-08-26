@@ -1,8 +1,9 @@
 # Soksak plugin registry contract 0.0.1
 
-The registry publishes a plugins array. Every item is one flat immutable release reference and may
-project exact direct plugin and sidecar runtime dependencies from that plugin release. It contains
-no independent component arrays, install summaries, provider bindings, or release history.
+The registry publishes a plugins array. Every item is one flat immutable release reference
+`{ id, version, size, sha256 }`. The index copies no runtime dependencies: a reader walks the closure
+from the release document the reference names. It contains no independent component arrays, install
+summaries, provider bindings, or release history.
 
 The plugins array contains one current release per plugin id. Publishing a newer release replaces
 that id in the catalogue; immutable owner releases and Git retain history.

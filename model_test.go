@@ -12,9 +12,9 @@ func reference(id string) ReleaseReference {
 func registryFixture() Registry {
 	return Registry{ID: "official", Sequence: 1, IssuedAt: "2026-08-21T00:00:00Z", ExpiresAt: "2026-09-21T00:00:00Z", Plugins: []Plugin{}, Signature: Signature{Algorithm: "ed25519", KeyID: "test-key", Value: base64.StdEncoding.EncodeToString(make([]byte, 64))}}
 }
-func TestRegistryContainsPluginsAndDirectRuntimeDependenciesOnly(t *testing.T) {
+func TestRegistryContainsReleaseReferencesOnly(t *testing.T) {
 	value := registryFixture()
-	value.Plugins = []Plugin{{ReleaseReference: reference("weather-plugin"), RuntimeDependencies: &RuntimeDependencies{Sidecars: []ReleaseReference{reference("weather-sidecar")}}}}
+	value.Plugins = []Plugin{{ReleaseReference: reference("weather-plugin")}}
 	if err := Validate(value); err != nil {
 		t.Fatal(err)
 	}
@@ -49,19 +49,6 @@ func TestParseRejectsLocationInReleaseReference(t *testing.T) {
 }
 func TestReferencesRemainSortedAndUnique(t *testing.T) {
 	value := registryFixture()
-	plugin := Plugin{ReleaseReference: reference("weather-plugin"), RuntimeDependencies: &RuntimeDependencies{Sidecars: []ReleaseReference{reference("weather-sidecar-b"), reference("weather-sidecar-a")}}}
-	value.Plugins = []Plugin{plugin}
-	if Validate(value) == nil {
-		t.Fatal("unsorted sidecars accepted")
-	}
-	plugin.RuntimeDependencies.Sidecars = []ReleaseReference{reference("weather-sidecar-a"), reference("weather-sidecar-a")}
-	if Validate(value) == nil {
-		t.Fatal("duplicate sidecars accepted")
-	}
-	plugin.RuntimeDependencies.Sidecars = []ReleaseReference{reference("weather-sidecar-a"), reference("weather-sidecar-b")}
-	if err := Validate(value); err != nil {
-		t.Fatal(err)
-	}
 	value.Plugins = []Plugin{{ReleaseReference: reference("weather-plugin-b")}, {ReleaseReference: reference("weather-plugin-a")}}
 	if Validate(value) == nil {
 		t.Fatal("unsorted plugins accepted")

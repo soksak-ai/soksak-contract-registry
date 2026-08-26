@@ -25,13 +25,11 @@ type ReleaseReference struct {
 	Size    int64  `json:"size"`
 	SHA256  string `json:"sha256"`
 }
-type RuntimeDependencies struct {
-	Plugins  []ReleaseReference `json:"plugins,omitempty"`
-	Sidecars []ReleaseReference `json:"sidecars,omitempty"`
-}
+
+// Plugin is one current release reference. The index copies no runtimeDependencies: a reader walks
+// the closure from the release document the reference names.
 type Plugin struct {
 	ReleaseReference
-	RuntimeDependencies *RuntimeDependencies `json:"runtimeDependencies,omitempty"`
 }
 type Signature struct {
 	Algorithm string `json:"algorithm"`
@@ -96,17 +94,6 @@ func Validate(value Registry) error {
 			return err
 		}
 		ids = append(ids, plugin.ID)
-		if plugin.RuntimeDependencies != nil {
-			if err := validateReferences(plugin.RuntimeDependencies.Plugins, "plugin"); err != nil {
-				return err
-			}
-			if err := validateReferences(plugin.RuntimeDependencies.Sidecars, "sidecar"); err != nil {
-				return err
-			}
-			if len(plugin.RuntimeDependencies.Plugins) == 0 && len(plugin.RuntimeDependencies.Sidecars) == 0 {
-				return fmt.Errorf("empty runtimeDependencies")
-			}
-		}
 	}
 	if !sortedUnique(ids) {
 		return fmt.Errorf("plugins must be sorted and unique by id")
